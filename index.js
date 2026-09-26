@@ -1,13 +1,17 @@
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
+const axios = require('axios');
+const xml2js = require('xml2js');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 let sock;
+let latestQrImage = '';
 
+// WhatsApp কানেকশন সেটআপ
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_session');
 
@@ -23,60 +27,81 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            console.log('\n==============================================');
-            console.log('নিচের QR কোডটি হোয়াটসঅ্যাপ দিয়ে স্ক্যান করুন:');
-            qrcode.generate(qr, { small: true });
-            console.log('==============================================\n');
-        }
-
-        if (connection === 'open') {
-            console.log('\n✅ WhatsApp Bot সফলভাবে অনলাইন হয়েছে!\n');
+            QRCode.toDataURL(qr, (err, url) => {
+                if (!err) latestQrImage = url;
+            });
         }
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('কানেকশন বিচ্ছিন্ন হয়েছে। পুনঃসংযোগ করার চেষ্টা করা হচ্ছে...', shouldReconnect);
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
                 connectToWhatsApp();
             }
+        } else if (connection === 'open') {
+            console.log('Connected successfully!');
+            latestQrImage = '';
         }
     });
 }
 
-// অটো-পোস্টিং এপিআই এন্ডপয়েন্ট
-app.post('/send-post', async (req, res) => {
-    try {
-        const { channelId, title, postUrl, imageUrl } = req.body;
-
-        if (!sock) {
-            return res.status(500).json({ success: false, error: 'WhatsApp socket connected নয়!' });
-        }
-
-        const messageCaption = `📌 *${title}*\n\nপড়ুন পুরো পোস্টটি:\n${postUrl}`;
-
-        if (imageUrl) {
-            await sock.sendMessage(channelId, {
-                image: { url: imageUrl },
-                caption: messageCaption
-            });
-        } else {
-            await sock.sendMessage(channelId, {
-                text: messageCaption
-            });
-        }
-
-        return res.json({ success: true, message: 'চ্যানেলে পোস্ট সফলভাবে পাঠানো হয়েছে!' });
-    } catch (err) {
-        console.error('পোস্ট পাঠাতে ব্যর্থ:', err);
-        return res.status(500).json({ success: false, error: err.toString() });
+// ব্রাউজারে QR কোডের ছবি দেখার রুট
+app.get('/qr', (req, res) => {
+    if (latestQrImage) {
+        res.send(`<div style="display:flex;justify-content:center;align-items:center;height:100vh;"><img src="${latestQrImage}" style="width:300px;height:300px;"/></div>`);
+    } else {
+        res.send('<h2 style="text-align:center;margin-top:20%;">QR Code unavailable or Already Connected!</h2>');
     }
 });
 
-app.get('/', (req, res) => {
-    res.send('WhatsApp Bot Server is Running Live!');
+// ব্লগের সাম্প্রতিক/পুরোনো পোস্ট পাওয়ার রুট (Blogger Atom Feed Reader)
+app.get('/get-blog-posts', async (req, res) => {
+    try {
+        const blogUrl = req.query.url || 'https://elizabethfolio.blogspot.com/feeds/posts/default';
+        const response = await axios.get(blogUrl);
+        const parser = new xml2js.Parser();
+
+        parser.parseString(response.data, (err, result) => {
+            if (err) {
+                return res.status(500).json({ error: 'Feed parsing failed' });
+            }
+
+            const entries = result.feed.entry || [];
+            const posts = entries.map(entry => {
+                const linkObj = entry.link.find(l => l.$.rel === 'alternate');
+                return {
+                    title: entry.title[0]._,
+                    link: linkObj ? linkObj.$.href : '',
+                    published: entry.published ? entry.published[0] : ''
+                };
+            });
+
+            res.json({ status: 'success', total: posts.length, posts });
+        });
+    } catch (error) {
+        res.status(500).json({ status: 'error', error: error.message });
+    }
+});
+
+// WhatsApp-এ মেসেজ/পোস্ট পাঠানোর API
+app.post('/send-message', async (req, res) => {
+    const { number, message } = req.body;
+    if (!number || !message) {
+        return res.status(400).json({ error: 'Number and message are required' });
+    }
+
+    try {
+        const jid = number.includes('@s.whatsapp.net') || number.includes('@g.us') || number.includes('@newsletter')
+            ? number
+            : `${number}@s.whatsapp.net`;
+
+        await sock.sendMessage(jid, { text: message });
+        res.json({ status: 'success', message: 'Message sent successfully' });
+    } catch (error) {
+        res.status(500).json({ status: 'error', error: error.message });
+    }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
     connectToWhatsApp();
 });
