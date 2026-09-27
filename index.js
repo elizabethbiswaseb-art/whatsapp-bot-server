@@ -5,7 +5,6 @@ const {
     DisconnectReason
 } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
-const axios = require('axios');
 
 const app = express();
 app.use(express.json());
@@ -117,11 +116,11 @@ app.get('/reset-session', (req, res) => {
     return res.send("No session found. Go to /qr to scan.");
 });
 
-// ১০০% নিশ্চিত ডেলিভারি রাউট
+// ১০০% ওয়ার্কিং টেক্সট ও লিংক রাউট
 app.post('/send-message', async (req, res) => {
-    const { number, message, imageUrl } = req.body;
-    if (!number || (!message && !imageUrl)) {
-        return res.status(400).json({ error: 'Number and message or imageUrl are required' });
+    const { number, message } = req.body;
+    if (!number || !message) {
+        return res.status(400).json({ error: 'Number and message are required' });
     }
 
     if (!sock || !isConnected) {
@@ -134,36 +133,8 @@ app.post('/send-message', async (req, res) => {
             jid = `${jid}@s.whatsapp.net`;
         }
 
-        const isChannel = jid.endsWith('@newsletter');
-
-        if (isChannel) {
-            // চ্যানেলে ছবি সরাসরি দিলে ড্রপ হয়, তাই চেষ্টা করবে ছবিতে না হলে ১০০% টেক্সট পাঠাবে
-            let sent = false;
-            if (imageUrl) {
-                try {
-                    const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-                    const imageBuffer = Buffer.from(imgRes.data, 'binary');
-                    await sock.sendMessage(jid, { image: imageBuffer, caption: message || '' });
-                    sent = true;
-                } catch (e) {
-                    console.log("Channel image attempt failed, falling back to rich text...");
-                }
-            }
-
-            if (!sent) {
-                // ছবি ব্যর্থ হলেও পোস্ট মিস হবে না, লিঙ্কসহ ফুল টেক্সট সুন্দরভাবে যাবে
-                await sock.sendMessage(jid, { text: message });
-            }
-        } else {
-            // সাধারণ চ্যাট
-            if (imageUrl) {
-                const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-                const imageBuffer = Buffer.from(imgRes.data, 'binary');
-                await sock.sendMessage(jid, { image: imageBuffer, caption: message || '' });
-            } else {
-                await sock.sendMessage(jid, { text: message });
-            }
-        }
+        // সরাসরি টেক্সট মেসেজ পাঠানো হচ্ছে
+        await sock.sendMessage(jid, { text: message });
 
         return res.json({ status: 'success', message: 'Sent successfully' });
     } catch (error) {
