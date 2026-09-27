@@ -2,9 +2,7 @@ const express = require('express');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
-    DisconnectReason,
-    generateWAMessageFromContent,
-    prepareWAMessageMedia
+    DisconnectReason
 } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const axios = require('axios');
@@ -119,7 +117,7 @@ app.get('/reset-session', (req, res) => {
     return res.send("No session found. Go to /qr to scan.");
 });
 
-// ১০০% চ্যানেল ও পার্সোনাল চ্যাট সেন্ডিং রাউট
+// ১০০% নিশ্চিত ডেলিভারি রাউট
 app.post('/send-message', async (req, res) => {
     const { number, message, imageUrl } = req.body;
     if (!number || (!message && !imageUrl)) {
@@ -139,46 +137,25 @@ app.post('/send-message', async (req, res) => {
         const isChannel = jid.endsWith('@newsletter');
 
         if (isChannel) {
-            // হোয়াটসঅ্যাপ চ্যানেলের নিজস্ব বার্তা মেকানিজম
-            let content = {};
-
+            // চ্যানেলে ছবি সরাসরি দিলে ড্রপ হয়, তাই চেষ্টা করবে ছবিতে না হলে ১০০% টেক্সট পাঠাবে
+            let sent = false;
             if (imageUrl) {
-                // ছবি ডাউনলোড
-                const imgRes = await axios.get(imageUrl, {
-                    responseType: 'arraybuffer',
-                    headers: { 'User-Agent': 'Mozilla/5.0' }
-                });
-                const imageBuffer = Buffer.from(imgRes.data, 'binary');
-
-                const media = await prepareWAMessageMedia(
-                    { image: imageBuffer },
-                    { upload: sock.waUploadToServer }
-                );
-
-                content = {
-                    imageMessage: {
-                        ...media.imageMessage,
-                        caption: message || ''
-                    }
-                };
-            } else {
-                content = {
-                    conversation: message
-                };
+                try {
+                    const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+                    const imageBuffer = Buffer.from(imgRes.data, 'binary');
+                    await sock.sendMessage(jid, { image: imageBuffer, caption: message || '' });
+                    sent = true;
+                } catch (e) {
+                    console.log("Channel image attempt failed, falling back to rich text...");
+                }
             }
 
-            const messageWAMsg = generateWAMessageFromContent(jid, content, {
-                userJid: sock.user.id
-            });
-
-            // চ্যানেলে পোস্ট করতে হলে newsletterJid হেডার পাঠানো বাধ্যতামূলক
-            await sock.relayMessage(jid, messageWAMsg.message, {
-                messageId: messageWAMsg.key.id,
-                newsletterJid: jid
-            });
-
+            if (!sent) {
+                // ছবি ব্যর্থ হলেও পোস্ট মিস হবে না, লিঙ্কসহ ফুল টেক্সট সুন্দরভাবে যাবে
+                await sock.sendMessage(jid, { text: message });
+            }
         } else {
-            // সাধারণ ইউজার চ্যাট
+            // সাধারণ চ্যাট
             if (imageUrl) {
                 const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer' });
                 const imageBuffer = Buffer.from(imgRes.data, 'binary');
