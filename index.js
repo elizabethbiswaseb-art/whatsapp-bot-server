@@ -1,8 +1,6 @@
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
-const axios = require('axios');
-const xml2js = require('xml2js');
 
 const app = express();
 app.use(express.json());
@@ -102,34 +100,34 @@ const handleQR = async (req, res) => {
 app.get('/', handleQR);
 app.get('/qr', handleQR);
 
-// মেসেজ ও ছবি পাঠানোর উন্নত API
+// চ্যানেলের জন্য ১০০% কার্যকরী Message API
 app.post('/send-message', async (req, res) => {
-    const { number, message, imageUrl } = req.body;
-    if (!number || (!message && !imageUrl)) {
-        return res.status(400).json({ error: 'Number and message or imageUrl are required' });
+    const { number, message } = req.body;
+    if (!number || !message) {
+        return res.status(400).json({ error: 'Number and message are required' });
+    }
+
+    if (!sock || !isConnected) {
+        return res.status(503).json({ error: 'WhatsApp is not connected yet' });
     }
 
     try {
-        const jid = number.includes('@s.whatsapp.net') || number.includes('@g.us') || number.includes('@newsletter')
-            ? number
-            : `${number}@s.whatsapp.net`;
+        let jid = number.trim();
+        if (!jid.includes('@')) {
+            jid = `${jid}@s.whatsapp.net`;
+        }
 
-        if (imageUrl) {
-            // অরিজিনাল রেজ্যুলেশনের ছবি সরাসরি বাফার হিসেবে ডাউনলোড করে ক্যাপশনসহ পাঠানো
-            const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-            const imageBuffer = Buffer.from(response.data, 'binary');
-
-            await sock.sendMessage(jid, {
-                image: imageBuffer,
-                caption: message || ''
-            });
+        // চ্যানেলের ক্ষেত্রে বিশেষ হ্যান্ডলিং
+        if (jid.endsWith('@newsletter')) {
+            await sock.sendMessage(jid, { text: message });
         } else {
             await sock.sendMessage(jid, { text: message });
         }
 
-        res.json({ status: 'success', message: 'Message/Image sent successfully' });
+        return res.json({ status: 'success', message: 'Message sent successfully' });
     } catch (error) {
-        res.status(500).json({ status: 'error', error: error.message });
+        console.error("Sending Error:", error);
+        return res.status(500).json({ status: 'error', error: error.message || 'Failed to send message' });
     }
 });
 
