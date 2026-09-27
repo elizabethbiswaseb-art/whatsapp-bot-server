@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, generateWAMessageFromContent, prepareWAMessageMedia } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const axios = require('axios');
 
@@ -113,7 +113,7 @@ app.get('/reset-session', (req, res) => {
     return res.send("No session found. Go to /qr to scan.");
 });
 
-// ১০০% চ্যানেল সামঞ্জস্যপূর্ণ মেসেজিং সিস্টেম
+// ১০০% ওয়ার্কিং চ্যানেল এবং পার্সোনাল পোস্ট সিস্টেম
 app.post('/send-message', async (req, res) => {
     const { number, message, imageUrl } = req.body;
     if (!number || (!message && !imageUrl)) {
@@ -133,23 +133,36 @@ app.post('/send-message', async (req, res) => {
         const isChannel = jid.endsWith('@newsletter');
 
         if (imageUrl) {
-            // ইমেজ বাফার ডাউনলোড
+            // পিকচার ডাউনলোড
             const imgRes = await axios.get(imageUrl, {
                 responseType: 'arraybuffer',
-                headers: { 'User-Agent': 'Mozilla/5.0' }
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
             });
             const imageBuffer = Buffer.from(imgRes.data, 'binary');
 
             if (isChannel) {
-                // চ্যানেলে পোস্ট পাঠানোর নির্দিষ্ট নিয়ম
-                await sock.sendMessage(jid, {
-                    image: imageBuffer,
-                    caption: message || '',
-                    contextInfo: {
-                        isForwarded: false
-                    }
-                });
+                // চ্যানেল মেসেজের বিশেষ প্রোটোকল
+                const mediaMessage = await prepareWAMessageMedia(
+                    { image: imageBuffer },
+                    { upload: sock.waUploadToServer }
+                );
+
+                const msg = generateWAMessageFromContent(
+                    jid,
+                    {
+                        imageMessage: {
+                            ...mediaMessage.imageMessage,
+                            caption: message || ''
+                        }
+                    },
+                    {}
+                );
+
+                await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
             } else {
+                // সাধারণ চ্যাট
                 await sock.sendMessage(jid, {
                     image: imageBuffer,
                     caption: message || ''
