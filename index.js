@@ -9,7 +9,8 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 let sock;
-let currentRawQR = ''; // কাঁচা QR স্ট্রিং রাখার জন্য
+let currentRawQR = '';
+let isConnected = false;
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_session');
@@ -26,45 +27,82 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            currentRawQR = qr; // নতুন QR আসলেই আপডেট হবে
+            currentRawQR = qr;
+            isConnected = false;
         }
 
         if (connection === 'close') {
+            isConnected = false;
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
                 connectToWhatsApp();
             }
         } else if (connection === 'open') {
             console.log('Connected successfully!');
-            currentRawQR = ''; // কানেক্ট হলে QR মুছে যাবে
+            isConnected = true;
+            currentRawQR = '';
         }
     });
 }
 
-// ব্রাউজারে QR কোড অটো-জেনারেট করে দেখানোর রুট
-app.get('/qr', async (req, res) => {
+// অটো-রিফ্রেশসহ QR কোড পেজ (মূল পেজ এবং /qr দুই রুটের জন্যই প্রযোজ্য)
+const renderQRPage = async (req, res) => {
+    if (isConnected) {
+        return res.send(`
+            <html>
+                <head><title>WhatsApp Connected</title></head>
+                <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;background-color:#f0f2f5;">
+                    <div style="text-align:center;background:white;padding:40px;border-radius:10px;box-shadow:0 4px 10px rgba(0,0,0,0.1);">
+                        <h1 style="color:#25D366;margin-bottom:10px;">✔ Successfully Connected!</h1>
+                        <p style="color:#666;">Your WhatsApp Bot Server is Live and Ready.</p>
+                    </div>
+                </body>
+            </html>
+        `);
+    }
+
     if (currentRawQR) {
         try {
             const qrImageUrl = await QRCode.toDataURL(currentRawQR);
-            res.send(`
+            return res.send(`
                 <html>
-                    <head><title>Scan WhatsApp QR</title></head>
-                    <body style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;">
-                        <h2>Scan this QR code with WhatsApp</h2>
-                        <img src="${qrImageUrl}" style="width:300px;height:300px;border:2px solid #ccc;padding:10px;border-radius:8px;" />
-                        <p>Page will refresh automatically if needed.</p>
+                    <head>
+                        <title>Scan WhatsApp QR Code</title>
+                        <meta http-equiv="refresh" content="5">
+                    </head>
+                    <body style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;background-color:#f0f2f5;">
+                        <div style="text-align:center;background:white;padding:30px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+                            <h2 style="color:#128C7E;margin-top:0;">Scan QR Code with WhatsApp</h2>
+                            <img src="${qrImageUrl}" style="width:280px;height:280px;border:2px solid #25D366;padding:10px;border-radius:8px;" />
+                            <p style="color:#888;font-size:13px;margin-top:15px;">Auto-refreshing every 5 seconds...</p>
+                        </div>
                     </body>
                 </html>
             `);
         } catch (err) {
-            res.status(500).send('Error generating QR image');
+            return res.status(500).send('Error generating QR image');
         }
-    } else {
-        res.send('<h2 style="text-align:center;margin-top:20%;font-family:sans-serif;">QR Code Unavailable or Already Connected!</h2>');
     }
-});
 
-// ব্লগের পোস্ট পাওয়ার রুট (Atom Feed)
+    // যদি QR কোড এখনও তৈরি না হয়ে থাকে
+    return res.send(`
+        <html>
+            <head>
+                <title>Generating QR Code...</title>
+                <meta http-equiv="refresh" content="3">
+            </head>
+            <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;">
+                <h3 style="color:#555;">Generating QR Code, please wait 3 seconds...</h3>
+            </body>
+        </html>
+    `);
+};
+
+// মূল লিঙ্ক এবং /qr লিঙ্ক দুটিতেই পেজটি দেখাবে
+app.get('/', renderQRPage);
+app.get('/qr', renderQRPage);
+
+// ব্লগের পোস্ট ফ্যাচ করার রুট
 app.get('/get-blog-posts', async (req, res) => {
     try {
         const blogUrl = req.query.url || 'https://elizabethfolio.blogspot.com/feeds/posts/default';
@@ -93,7 +131,7 @@ app.get('/get-blog-posts', async (req, res) => {
     }
 });
 
-// WhatsApp মেসেজ পাঠানোর API
+// মেসেজ পাঠানোর API
 app.post('/send-message', async (req, res) => {
     const { number, message } = req.body;
     if (!number || !message) {
