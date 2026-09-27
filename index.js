@@ -7,7 +7,6 @@ const xml2js = require('xml2js');
 const app = express();
 app.use(express.json());
 
-// Render-এর দেওয়া PORT ব্যবহার করার নিশ্চিত ব্যবস্থা
 const PORT = process.env.PORT || 10000;
 
 let sock;
@@ -39,7 +38,6 @@ async function connectToWhatsApp() {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-            // অটো রি-কানেক্ট
             if (shouldReconnect) {
                 setTimeout(connectToWhatsApp, 3000);
             }
@@ -51,7 +49,6 @@ async function connectToWhatsApp() {
     });
 }
 
-// QR কোড দেখানোর রুট
 const handleQR = async (req, res) => {
     if (isConnected) {
         return res.send(`
@@ -105,38 +102,11 @@ const handleQR = async (req, res) => {
 app.get('/', handleQR);
 app.get('/qr', handleQR);
 
-// ব্লগ ফিড সার্ভিস
-app.get('/get-blog-posts', async (req, res) => {
-    try {
-        const blogUrl = req.query.url || 'https://elizabethfolio.blogspot.com/feeds/posts/default';
-        const response = await axios.get(blogUrl);
-        const parser = new xml2js.Parser();
-
-        parser.parseString(response.data, (err, result) => {
-            if (err) return res.status(500).json({ error: 'Feed parsing failed' });
-
-            const entries = result.feed.entry || [];
-            const posts = entries.map(entry => {
-                const linkObj = entry.link.find(l => l.$.rel === 'alternate');
-                return {
-                    title: entry.title[0]._,
-                    link: linkObj ? linkObj.$.href : '',
-                    published: entry.published ? entry.published[0] : ''
-                };
-            });
-
-            res.json({ status: 'success', total: posts.length, posts });
-        });
-    } catch (error) {
-        res.status(500).json({ status: 'error', error: error.message });
-    }
-});
-
-// মেসেজ পাঠানোর API
+// মেসেজ ও ছবি পাঠানোর উন্নত API
 app.post('/send-message', async (req, res) => {
-    const { number, message } = req.body;
-    if (!number || !message) {
-        return res.status(400).json({ error: 'Number and message are required' });
+    const { number, message, imageUrl } = req.body;
+    if (!number || (!message && !imageUrl)) {
+        return res.status(400).json({ error: 'Number and message or imageUrl are required' });
     }
 
     try {
@@ -144,14 +114,25 @@ app.post('/send-message', async (req, res) => {
             ? number
             : `${number}@s.whatsapp.net`;
 
-        await sock.sendMessage(jid, { text: message });
-        res.json({ status: 'success', message: 'Message sent successfully' });
+        if (imageUrl) {
+            // অরিজিনাল রেজ্যুলেশনের ছবি সরাসরি বাফার হিসেবে ডাউনলোড করে ক্যাপশনসহ পাঠানো
+            const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+            const imageBuffer = Buffer.from(response.data, 'binary');
+
+            await sock.sendMessage(jid, {
+                image: imageBuffer,
+                caption: message || ''
+            });
+        } else {
+            await sock.sendMessage(jid, { text: message });
+        }
+
+        res.json({ status: 'success', message: 'Message/Image sent successfully' });
     } catch (error) {
         res.status(500).json({ status: 'error', error: error.message });
     }
 });
 
-// সার্ভার স্টার্ট
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);
     connectToWhatsApp();
