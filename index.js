@@ -1,5 +1,11 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, generateWAMessageFromContent, prepareWAMessageMedia } = require('@whiskeysockets/baileys');
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    generateWAMessageFromContent,
+    prepareWAMessageMedia
+} = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const axios = require('axios');
 
@@ -113,7 +119,7 @@ app.get('/reset-session', (req, res) => {
     return res.send("No session found. Go to /qr to scan.");
 });
 
-// ১০০% ওয়ার্কিং চ্যানেল এবং পার্সোনাল পোস্ট সিস্টেম
+// ১০০% চ্যানেল ও পার্সোনাল চ্যাট সেন্ডিং রাউট
 app.post('/send-message', async (req, res) => {
     const { number, message, imageUrl } = req.body;
     if (!number || (!message && !imageUrl)) {
@@ -132,44 +138,54 @@ app.post('/send-message', async (req, res) => {
 
         const isChannel = jid.endsWith('@newsletter');
 
-        if (imageUrl) {
-            // পিকচার ডাউনলোড
-            const imgRes = await axios.get(imageUrl, {
-                responseType: 'arraybuffer',
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            });
-            const imageBuffer = Buffer.from(imgRes.data, 'binary');
+        if (isChannel) {
+            // হোয়াটসঅ্যাপ চ্যানেলের নিজস্ব বার্তা মেকানিজম
+            let content = {};
 
-            if (isChannel) {
-                // চ্যানেল মেসেজের বিশেষ প্রোটোকল
-                const mediaMessage = await prepareWAMessageMedia(
+            if (imageUrl) {
+                // ছবি ডাউনলোড
+                const imgRes = await axios.get(imageUrl, {
+                    responseType: 'arraybuffer',
+                    headers: { 'User-Agent': 'Mozilla/5.0' }
+                });
+                const imageBuffer = Buffer.from(imgRes.data, 'binary');
+
+                const media = await prepareWAMessageMedia(
                     { image: imageBuffer },
                     { upload: sock.waUploadToServer }
                 );
 
-                const msg = generateWAMessageFromContent(
-                    jid,
-                    {
-                        imageMessage: {
-                            ...mediaMessage.imageMessage,
-                            caption: message || ''
-                        }
-                    },
-                    {}
-                );
-
-                await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+                content = {
+                    imageMessage: {
+                        ...media.imageMessage,
+                        caption: message || ''
+                    }
+                };
             } else {
-                // সাধারণ চ্যাট
-                await sock.sendMessage(jid, {
-                    image: imageBuffer,
-                    caption: message || ''
-                });
+                content = {
+                    conversation: message
+                };
             }
+
+            const messageWAMsg = generateWAMessageFromContent(jid, content, {
+                userJid: sock.user.id
+            });
+
+            // চ্যানেলে পোস্ট করতে হলে newsletterJid হেডার পাঠানো বাধ্যতামূলক
+            await sock.relayMessage(jid, messageWAMsg.message, {
+                messageId: messageWAMsg.key.id,
+                newsletterJid: jid
+            });
+
         } else {
-            await sock.sendMessage(jid, { text: message });
+            // সাধারণ ইউজার চ্যাট
+            if (imageUrl) {
+                const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+                const imageBuffer = Buffer.from(imgRes.data, 'binary');
+                await sock.sendMessage(jid, { image: imageBuffer, caption: message || '' });
+            } else {
+                await sock.sendMessage(jid, { text: message });
+            }
         }
 
         return res.json({ status: 'success', message: 'Sent successfully' });
