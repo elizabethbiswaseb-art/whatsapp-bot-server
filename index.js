@@ -101,7 +101,6 @@ const handleQR = async (req, res) => {
 app.get('/', handleQR);
 app.get('/qr', handleQR);
 
-// সরাসরি ছবি ও টেক্সট পাঠানোর সঠিক API
 app.post('/send-message', async (req, res) => {
     const { number, message, imageUrl } = req.body;
     if (!number || (!message && !imageUrl)) {
@@ -118,15 +117,25 @@ app.post('/send-message', async (req, res) => {
             jid = `${jid}@s.whatsapp.net`;
         }
 
+        const isChannel = jid.endsWith('@newsletter');
+
         if (imageUrl) {
-            // অরিজিনাল এইচডি ছবি বাফার হিসেবে ডাউনলোড করা
             const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer' });
             const imageBuffer = Buffer.from(imgRes.data, 'binary');
 
-            await sock.sendMessage(jid, {
-                image: imageBuffer,
-                caption: message || ''
-            });
+            if (isChannel) {
+                // চ্যানেলে ছবির বার্তা সঠিকভাবে প্রেরণের জন্য বিশেষ ফরম্যাট
+                await sock.sendMessage(jid, {
+                    image: imageBuffer,
+                    caption: message || '',
+                    newsletterJid: jid
+                });
+            } else {
+                await sock.sendMessage(jid, {
+                    image: imageBuffer,
+                    caption: message || ''
+                });
+            }
         } else {
             await sock.sendMessage(jid, { text: message });
         }
