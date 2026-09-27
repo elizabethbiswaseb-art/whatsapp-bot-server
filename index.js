@@ -7,7 +7,9 @@ const xml2js = require('xml2js');
 const app = express();
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
+// Render-এর দেওয়া PORT ব্যবহার করার নিশ্চিত ব্যবস্থা
+const PORT = process.env.PORT || 10000;
+
 let sock;
 let currentRawQR = '';
 let isConnected = false;
@@ -18,7 +20,7 @@ async function connectToWhatsApp() {
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
-        browser: ["Mac OS", "Chrome", "10.0.0"]
+        browser: ["Ubuntu", "Chrome", "20.0.0"]
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -33,9 +35,13 @@ async function connectToWhatsApp() {
 
         if (connection === 'close') {
             isConnected = false;
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            currentRawQR = '';
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+            // অটো রি-কানেক্ট
             if (shouldReconnect) {
-                connectToWhatsApp();
+                setTimeout(connectToWhatsApp, 3000);
             }
         } else if (connection === 'open') {
             console.log('Connected successfully!');
@@ -45,16 +51,15 @@ async function connectToWhatsApp() {
     });
 }
 
-// অটো-রিফ্রেশসহ QR কোড পেজ (মূল পেজ এবং /qr দুই রুটের জন্যই প্রযোজ্য)
-const renderQRPage = async (req, res) => {
+// QR কোড দেখানোর রুট
+const handleQR = async (req, res) => {
     if (isConnected) {
         return res.send(`
             <html>
-                <head><title>WhatsApp Connected</title></head>
-                <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;background-color:#f0f2f5;">
-                    <div style="text-align:center;background:white;padding:40px;border-radius:10px;box-shadow:0 4px 10px rgba(0,0,0,0.1);">
-                        <h1 style="color:#25D366;margin-bottom:10px;">✔ Successfully Connected!</h1>
-                        <p style="color:#666;">Your WhatsApp Bot Server is Live and Ready.</p>
+                <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;background:#f0f2f5;">
+                    <div style="text-align:center;background:white;padding:40px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);">
+                        <h2 style="color:#25D366;">✔ WhatsApp Connected Successfully!</h2>
+                        <p>Your bot is now live and working.</p>
                     </div>
                 </body>
             </html>
@@ -67,42 +72,40 @@ const renderQRPage = async (req, res) => {
             return res.send(`
                 <html>
                     <head>
-                        <title>Scan WhatsApp QR Code</title>
-                        <meta http-equiv="refresh" content="5">
+                        <title>Scan WhatsApp QR</title>
+                        <meta http-equiv="refresh" content="3">
                     </head>
-                    <body style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;background-color:#f0f2f5;">
+                    <body style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;background:#f0f2f5;">
                         <div style="text-align:center;background:white;padding:30px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
                             <h2 style="color:#128C7E;margin-top:0;">Scan QR Code with WhatsApp</h2>
                             <img src="${qrImageUrl}" style="width:280px;height:280px;border:2px solid #25D366;padding:10px;border-radius:8px;" />
-                            <p style="color:#888;font-size:13px;margin-top:15px;">Auto-refreshing every 5 seconds...</p>
+                            <p style="color:#888;font-size:12px;margin-top:15px;">Auto-refreshing every 3 seconds...</p>
                         </div>
                     </body>
                 </html>
             `);
         } catch (err) {
-            return res.status(500).send('Error generating QR image');
+            return res.status(500).send('Error rendering QR Code');
         }
     }
 
-    // যদি QR কোড এখনও তৈরি না হয়ে থাকে
     return res.send(`
         <html>
             <head>
-                <title>Generating QR Code...</title>
+                <title>Connecting...</title>
                 <meta http-equiv="refresh" content="3">
             </head>
             <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;">
-                <h3 style="color:#555;">Generating QR Code, please wait 3 seconds...</h3>
+                <h3 style="color:#555;">Generating new QR Code, please wait 3 seconds...</h3>
             </body>
         </html>
     `);
 };
 
-// মূল লিঙ্ক এবং /qr লিঙ্ক দুটিতেই পেজটি দেখাবে
-app.get('/', renderQRPage);
-app.get('/qr', renderQRPage);
+app.get('/', handleQR);
+app.get('/qr', handleQR);
 
-// ব্লগের পোস্ট ফ্যাচ করার রুট
+// ব্লগ ফিড সার্ভিস
 app.get('/get-blog-posts', async (req, res) => {
     try {
         const blogUrl = req.query.url || 'https://elizabethfolio.blogspot.com/feeds/posts/default';
@@ -110,9 +113,7 @@ app.get('/get-blog-posts', async (req, res) => {
         const parser = new xml2js.Parser();
 
         parser.parseString(response.data, (err, result) => {
-            if (err) {
-                return res.status(500).json({ error: 'Feed parsing failed' });
-            }
+            if (err) return res.status(500).json({ error: 'Feed parsing failed' });
 
             const entries = result.feed.entry || [];
             const posts = entries.map(entry => {
@@ -150,7 +151,8 @@ app.post('/send-message', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// সার্ভার স্টার্ট
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on port ${PORT}`);
     connectToWhatsApp();
 });
