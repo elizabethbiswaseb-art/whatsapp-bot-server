@@ -9,9 +9,8 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 let sock;
-let latestQrImage = '';
+let currentRawQR = ''; // কাঁচা QR স্ট্রিং রাখার জন্য
 
-// WhatsApp কানেকশন সেটআপ
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_session');
 
@@ -27,9 +26,7 @@ async function connectToWhatsApp() {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            QRCode.toDataURL(qr, (err, url) => {
-                if (!err) latestQrImage = url;
-            });
+            currentRawQR = qr; // নতুন QR আসলেই আপডেট হবে
         }
 
         if (connection === 'close') {
@@ -39,21 +36,35 @@ async function connectToWhatsApp() {
             }
         } else if (connection === 'open') {
             console.log('Connected successfully!');
-            latestQrImage = '';
+            currentRawQR = ''; // কানেক্ট হলে QR মুছে যাবে
         }
     });
 }
 
-// ব্রাউজারে QR কোডের ছবি দেখার রুট
-app.get('/qr', (req, res) => {
-    if (latestQrImage) {
-        res.send(`<div style="display:flex;justify-content:center;align-items:center;height:100vh;"><img src="${latestQrImage}" style="width:300px;height:300px;"/></div>`);
+// ব্রাউজারে QR কোড অটো-জেনারেট করে দেখানোর রুট
+app.get('/qr', async (req, res) => {
+    if (currentRawQR) {
+        try {
+            const qrImageUrl = await QRCode.toDataURL(currentRawQR);
+            res.send(`
+                <html>
+                    <head><title>Scan WhatsApp QR</title></head>
+                    <body style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;">
+                        <h2>Scan this QR code with WhatsApp</h2>
+                        <img src="${qrImageUrl}" style="width:300px;height:300px;border:2px solid #ccc;padding:10px;border-radius:8px;" />
+                        <p>Page will refresh automatically if needed.</p>
+                    </body>
+                </html>
+            `);
+        } catch (err) {
+            res.status(500).send('Error generating QR image');
+        }
     } else {
-        res.send('<h2 style="text-align:center;margin-top:20%;">QR Code unavailable or Already Connected!</h2>');
+        res.send('<h2 style="text-align:center;margin-top:20%;font-family:sans-serif;">QR Code Unavailable or Already Connected!</h2>');
     }
 });
 
-// ব্লগের সাম্প্রতিক/পুরোনো পোস্ট পাওয়ার রুট (Blogger Atom Feed Reader)
+// ব্লগের পোস্ট পাওয়ার রুট (Atom Feed)
 app.get('/get-blog-posts', async (req, res) => {
     try {
         const blogUrl = req.query.url || 'https://elizabethfolio.blogspot.com/feeds/posts/default';
@@ -82,7 +93,7 @@ app.get('/get-blog-posts', async (req, res) => {
     }
 });
 
-// WhatsApp-এ মেসেজ/পোস্ট পাঠানোর API
+// WhatsApp মেসেজ পাঠানোর API
 app.post('/send-message', async (req, res) => {
     const { number, message } = req.body;
     if (!number || !message) {
