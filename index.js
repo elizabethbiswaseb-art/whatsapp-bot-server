@@ -147,6 +147,19 @@ app.post('/send-message', async (req, res) => {
     }
 });
 
+// পুরনো সেশন মুছে ফেলার জন্য সিক্রেট রিসেট রুট
+app.get('/reset-session', (req, res) => {
+    const fs = require('fs');
+    if (fs.existsSync('auth_session')) {
+        fs.rmSync('auth_session', { recursive: true, force: true });
+        isConnected = false;
+        currentRawQR = '';
+        setTimeout(() => connectToWhatsApp(), 2000);
+        return res.send("Session deleted! Now go to /qr to scan new QR code.");
+    }
+    return res.send("No session found. Go to /qr to scan.");
+});
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);
     connectToWhatsApp();
