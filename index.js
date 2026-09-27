@@ -101,6 +101,19 @@ const handleQR = async (req, res) => {
 app.get('/', handleQR);
 app.get('/qr', handleQR);
 
+app.get('/reset-session', (req, res) => {
+    const fs = require('fs');
+    if (fs.existsSync('auth_session')) {
+        fs.rmSync('auth_session', { recursive: true, force: true });
+        isConnected = false;
+        currentRawQR = '';
+        setTimeout(() => connectToWhatsApp(), 2000);
+        return res.send("Session deleted! Now go to /qr to scan new QR code.");
+    }
+    return res.send("No session found. Go to /qr to scan.");
+});
+
+// ১০০% চ্যানেল সামঞ্জস্যপূর্ণ মেসেজিং সিস্টেম
 app.post('/send-message', async (req, res) => {
     const { number, message, imageUrl } = req.body;
     if (!number || (!message && !imageUrl)) {
@@ -120,15 +133,21 @@ app.post('/send-message', async (req, res) => {
         const isChannel = jid.endsWith('@newsletter');
 
         if (imageUrl) {
-            const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+            // ইমেজ বাফার ডাউনলোড
+            const imgRes = await axios.get(imageUrl, {
+                responseType: 'arraybuffer',
+                headers: { 'User-Agent': 'Mozilla/5.0' }
+            });
             const imageBuffer = Buffer.from(imgRes.data, 'binary');
 
             if (isChannel) {
-                // চ্যানেলে ছবির বার্তা সঠিকভাবে প্রেরণের জন্য বিশেষ ফরম্যাট
+                // চ্যানেলে পোস্ট পাঠানোর নির্দিষ্ট নিয়ম
                 await sock.sendMessage(jid, {
                     image: imageBuffer,
                     caption: message || '',
-                    newsletterJid: jid
+                    contextInfo: {
+                        isForwarded: false
+                    }
                 });
             } else {
                 await sock.sendMessage(jid, {
@@ -145,19 +164,6 @@ app.post('/send-message', async (req, res) => {
         console.error("Sending Error:", error);
         return res.status(500).json({ status: 'error', error: error.message || 'Failed to send message' });
     }
-});
-
-// পুরনো সেশন মুছে ফেলার জন্য সিক্রেট রিসেট রুট
-app.get('/reset-session', (req, res) => {
-    const fs = require('fs');
-    if (fs.existsSync('auth_session')) {
-        fs.rmSync('auth_session', { recursive: true, force: true });
-        isConnected = false;
-        currentRawQR = '';
-        setTimeout(() => connectToWhatsApp(), 2000);
-        return res.send("Session deleted! Now go to /qr to scan new QR code.");
-    }
-    return res.send("No session found. Go to /qr to scan.");
 });
 
 app.listen(PORT, '0.0.0.0', () => {
