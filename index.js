@@ -2,9 +2,11 @@ const express = require('express');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
-    DisconnectReason
+    DisconnectReason,
+    fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
+const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -17,11 +19,16 @@ let isConnected = false;
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_session');
+    const { version } = await fetchLatestBaileysVersion();
 
     sock = makeWASocket({
+        version,
         auth: state,
         printQRInTerminal: false,
-        browser: ["Ubuntu", "Chrome", "20.0.0"]
+        browser: ["Ubuntu", "Chrome", "20.0.0"],
+        keepAliveIntervalMs: 30000, // ৩০ সেকেন্ড পর পর কানেকশন লাইভ রাখবে
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 0
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -37,19 +44,32 @@ async function connectToWhatsApp() {
         if (connection === 'close') {
             isConnected = false;
             currentRawQR = '';
+
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
+            console.log(`Connection closed. Reason Status Code: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+
             if (shouldReconnect) {
-                setTimeout(connectToWhatsApp, 3000);
+                // ২ সেকেন্ড পর অটো রিকানেক্ট
+                setTimeout(connectToWhatsApp, 2000);
+            } else {
+                console.log('Logged out from WhatsApp. Please scan QR code again.');
             }
         } else if (connection === 'open') {
-            console.log('Connected successfully!');
+            console.log('Connected successfully to WhatsApp!');
             isConnected = true;
             currentRawQR = '';
         }
     });
 }
+
+// Render Server Keep-Alive Ping Engine (সার্ভারকে ঘুমাতে দেবে না)
+setInterval(() => {
+    if (isConnected && sock) {
+        sock.sendPresenceUpdate('available').catch(() => { });
+    }
+}, 45000);
 
 const handleQR = async (req, res) => {
     if (isConnected) {
@@ -58,7 +78,7 @@ const handleQR = async (req, res) => {
                 <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;background:#f0f2f5;">
                     <div style="text-align:center;background:white;padding:40px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1);">
                         <h2 style="color:#25D366;">✔ WhatsApp Connected Successfully!</h2>
-                        <p>Your bot is now live and working.</p>
+                        <p>Your bot is live and working properly.</p>
                     </div>
                 </body>
             </html>
@@ -104,8 +124,9 @@ const handleQR = async (req, res) => {
 app.get('/', handleQR);
 app.get('/qr', handleQR);
 
+app.get('/ping', (req, res) => res.send('PONG'));
+
 app.get('/reset-session', (req, res) => {
-    const fs = require('fs');
     if (fs.existsSync('auth_session')) {
         fs.rmSync('auth_session', { recursive: true, force: true });
         isConnected = false;
@@ -116,7 +137,6 @@ app.get('/reset-session', (req, res) => {
     return res.send("No session found. Go to /qr to scan.");
 });
 
-// ১০০% ওয়ার্কিং টেক্সট ও লিংক রাউট
 app.post('/send-message', async (req, res) => {
     const { number, message } = req.body;
     if (!number || !message) {
@@ -133,9 +153,7 @@ app.post('/send-message', async (req, res) => {
             jid = `${jid}@s.whatsapp.net`;
         }
 
-        // সরাসরি টেক্সট মেসেজ পাঠানো হচ্ছে
         await sock.sendMessage(jid, { text: message });
-
         return res.json({ status: 'success', message: 'Sent successfully' });
     } catch (error) {
         console.error("Sending Error:", error);
