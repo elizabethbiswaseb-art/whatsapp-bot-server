@@ -137,10 +137,11 @@ app.get('/reset-session', (req, res) => {
     return res.send("No session found. Go to /qr to scan.");
 });
 
+// ফটো + ক্যাপশন মেসেজ সাপোর্টসহ রাউট
 app.post('/send-message', async (req, res) => {
-    const { number, message } = req.body;
-    if (!number || !message) {
-        return res.status(400).json({ error: 'Number and message are required' });
+    const { number, message, imageUrl } = req.body;
+    if (!number || (!message && !imageUrl)) {
+        return res.status(400).json({ error: 'Number and message/imageUrl are required' });
     }
 
     if (!sock || !isConnected) {
@@ -153,7 +154,15 @@ app.post('/send-message', async (req, res) => {
             jid = `${jid}@s.whatsapp.net`;
         }
 
-        await sock.sendMessage(jid, { text: message });
+        if (imageUrl) {
+            await sock.sendMessage(jid, {
+                image: { url: imageUrl },
+                caption: message
+            });
+        } else {
+            await sock.sendMessage(jid, { text: message });
+        }
+
         return res.json({ status: 'success', message: 'Sent successfully' });
     } catch (error) {
         console.error("Sending Error:", error);
