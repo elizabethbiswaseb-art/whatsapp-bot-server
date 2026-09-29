@@ -137,7 +137,7 @@ app.get('/reset-session', (req, res) => {
     return res.send("No session found. Go to /qr to scan.");
 });
 
-// ফটো + ক্যাপশন মেসেজ সাপোর্টসহ রাউট
+// ফটো + ক্যাপশন মেসেজ সাপোর্টসহ আপডেট করা রাউট (Buffer Download Method)
 app.post('/send-message', async (req, res) => {
     const { number, message, imageUrl } = req.body;
     if (!number || (!message && !imageUrl)) {
@@ -155,15 +155,38 @@ app.post('/send-message', async (req, res) => {
         }
 
         if (imageUrl) {
-            await sock.sendMessage(jid, {
-                image: { url: imageUrl },
-                caption: message
-            });
-        } else {
-            await sock.sendMessage(jid, { text: message });
+            try {
+                // Blogger বা যেকোনো সার্ভার থেকে সরাসরি ইমেজ Buffer ডাউনলোড করা
+                const imageResponse = await fetch(imageUrl, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                    }
+                });
+
+                if (imageResponse.ok) {
+                    const arrayBuffer = await imageResponse.arrayBuffer();
+                    const imageBuffer = Buffer.from(arrayBuffer);
+
+                    // Buffer হিসেবে ইমেজ পাঠানো
+                    await sock.sendMessage(jid, {
+                        image: imageBuffer,
+                        caption: message
+                    });
+
+                    console.log("Image message sent successfully with buffer.");
+                    return res.json({ status: 'success', message: 'Sent image successfully' });
+                } else {
+                    console.error("Failed to fetch image, falling back to text:", imageResponse.statusText);
+                }
+            } catch (imgErr) {
+                console.error("Error fetching image buffer:", imgErr);
+            }
         }
 
-        return res.json({ status: 'success', message: 'Sent successfully' });
+        // ছবি ফেইল করলে বা ইমেজ না থাকলে ব্যাকআপ হিসেবে টেক্সট মেসেজ পাঠানো
+        await sock.sendMessage(jid, { text: message });
+        return res.json({ status: 'success', message: 'Sent text successfully' });
+
     } catch (error) {
         console.error("Sending Error:", error);
         return res.status(500).json({ status: 'error', error: error.message || 'Failed to send message' });
